@@ -7,3 +7,4 @@ scipy  # TODO: remove when bnb has resolved https://github.com/TimDettmers/bitsa
 datasets  # quantize/gptq.py
 zstandard  # prepare_redpajama.py
 sentencepiece
+wandb
