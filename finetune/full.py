@@ -8,6 +8,8 @@ import lightning as L
 import torch
 from lightning.fabric.strategies import FSDPStrategy, XLAStrategy
 
+import wandb
+
 # support running without installing as a package
 wd = Path(__file__).parent.parent.resolve()
 sys.path.append(str(wd))
@@ -43,11 +45,12 @@ hparams = {k: v for k, v in locals().items() if isinstance(v, (int, float, str))
 
 
 def setup(
-    data_dir: Path = Path("data/alpaca"),
-    checkpoint_dir: Path = Path("checkpoints/stabilityai/stablelm-base-alpha-3b"),
-    out_dir: Path = Path("out/full/alpaca"),
-    precision: Optional[str] = None,
-    tpu: bool = False,
+        data_dir: Path = Path("data/alpaca"),
+        checkpoint_dir: Path = Path("checkpoints/stabilityai/stablelm-base-alpha-3b"),
+        out_dir: Path = Path("out/full/alpaca"),
+        precision: Optional[str] = None,
+        tpu: bool = False,
+        wandb_project_name: str = None
 ):
     if precision is None:
         precision = "32-true" if tpu else "bf16-mixed"
@@ -70,10 +73,10 @@ def setup(
 
     logger = step_csv_logger(out_dir.parent, out_dir.name, flush_logs_every_n_steps=log_interval)
     fabric = L.Fabric(devices=fabric_devices, strategy=strategy, precision=precision, loggers=logger)
-    fabric.launch(main, data_dir, checkpoint_dir, out_dir)
+    fabric.launch(main, data_dir, checkpoint_dir, out_dir, wandb_project_name)
 
 
-def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path):
+def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path, wandb_project_name: str):
     fabric.print(hparams)
     check_valid_checkpoint_dir(checkpoint_dir)
 
@@ -95,6 +98,14 @@ def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path):
     with lazy_load(checkpoint_path) as checkpoint:
         model.load_state_dict(checkpoint)
 
+    if wandb_project_name:
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project=wandb_project_name,
+            # track hyperparameters and run metadata
+            config=config
+        )
+
     num_params = sum(p.numel() for p in model.parameters())
     fabric.print(f"Number of trainable parameters: {num_params:,}")
 
@@ -105,7 +116,7 @@ def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path):
 
     train_time = time.time()
     train(fabric, model, optimizer, train_data, val_data, checkpoint_dir, out_dir, speed_monitor)
-    fabric.print(f"Training time: {(time.time()-train_time):.2f}s")
+    fabric.print(f"Training time: {(time.time() - train_time):.2f}s")
 
     # Save the final checkpoint at the end of training
     save_path = out_dir / "lit_model_finetuned.pth"
@@ -113,14 +124,14 @@ def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path):
 
 
 def train(
-    fabric: L.Fabric,
-    model: GPT,
-    optimizer: torch.optim.Optimizer,
-    train_data: List[Dict],
-    val_data: List[Dict],
-    checkpoint_dir: Path,
-    out_dir: Path,
-    speed_monitor: SpeedMonitor,
+        fabric: L.Fabric,
+        model: GPT,
+        optimizer: torch.optim.Optimizer,
+        train_data: List[Dict],
+        val_data: List[Dict],
+        checkpoint_dir: Path,
+        out_dir: Path,
+        speed_monitor: SpeedMonitor,
 ) -> None:
     tokenizer = Tokenizer(checkpoint_dir)
     max_seq_length, longest_seq_length, longest_seq_ix = get_max_seq_length(train_data)
@@ -187,6 +198,8 @@ def train(
                 f"iter {iter_num} step {step_count}: loss {loss.item():.4f}, iter time:"
                 f" {(t1 - iter_t0) * 1000:.2f}ms{' (optimizer.step)' if not is_accumulating else ''}"
             )
+            if wandb.run:
+                wandb.log({'loss': f'{loss.item():.4f}'})
 
         if not is_accumulating and step_count % eval_interval == 0:
             t0 = time.time()
@@ -194,6 +207,10 @@ def train(
             t1 = time.time() - t0
             speed_monitor.eval_end(t1)
             fabric.print(f"step {iter_num}: val loss {val_loss:.4f}, val time: {t1 * 1000:.2f}ms")
+
+            if wandb.run:
+                wandb.log({'val loss': f'{val_loss:.4f}'})
+
             fabric.barrier()
         if not is_accumulating and step_count % save_interval == 0:
             checkpoint_path = out_dir / f"iter-{iter_num:06d}-ckpt.pth"
@@ -202,7 +219,7 @@ def train(
 
 @torch.no_grad()
 def validate(
-    fabric: L.Fabric, model: GPT, val_data: List[Dict], tokenizer: Tokenizer, longest_seq_length: int
+        fabric: L.Fabric, model: GPT, val_data: List[Dict], tokenizer: Tokenizer, longest_seq_length: int
 ) -> torch.Tensor:
     fabric.print("Validating ...")
     model.eval()
@@ -234,7 +251,7 @@ def validate(
 
 
 def get_batch(
-    fabric: L.Fabric, data: List[Dict], longest_seq_length: int, longest_seq_ix: Optional[int] = None
+        fabric: L.Fabric, data: List[Dict], longest_seq_length: int, longest_seq_ix: Optional[int] = None
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     ix = torch.randint(len(data), (micro_batch_size,))
     if longest_seq_ix is not None:
