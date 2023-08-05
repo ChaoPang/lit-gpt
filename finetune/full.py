@@ -25,7 +25,7 @@ eval_interval = 600
 save_interval = 1000
 eval_iters = 100
 log_interval = 1
-devices = 1
+devices = 2
 # change this value to force a maximum sequence length
 override_max_seq_length = None
 
@@ -81,7 +81,8 @@ def setup(
     fabric.launch(main, data_dir, checkpoint_dir, out_dir, model_name, wandb_project_name)
 
 
-def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path, model_name: str, wandb_project_name: str):
+def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path, model_name: str,
+         wandb_project_name: str):
     fabric.print(hparams)
     check_valid_checkpoint_dir(checkpoint_dir)
 
@@ -206,6 +207,9 @@ def train(
             fabric.print(
                 f"iter {iter_num} step {step_count}: loss {loss.item():.4f}, iter time:"
                 f" {(t1 - iter_t0) * 1000:.2f}ms{' (optimizer.step)' if not is_accumulating else ''}"
+            )
+            fabric.print(
+                f'wandb.run: {wandb.run}'
             )
             if wandb.run:
                 wandb.log({'loss': f'{loss.item():.4f}'})
