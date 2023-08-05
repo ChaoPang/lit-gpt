@@ -208,11 +208,8 @@ def train(
                 f"iter {iter_num} step {step_count}: loss {loss.item():.4f}, iter time:"
                 f" {(t1 - iter_t0) * 1000:.2f}ms{' (optimizer.step)' if not is_accumulating else ''}"
             )
-            fabric.print(
-                f'wandb.run: {wandb.run}'
-            )
             if wandb.run:
-                wandb.log({'loss': f'{loss.item():.4f}'})
+                wandb.log({'loss': loss.item()})
 
         if not is_accumulating and step_count % eval_interval == 0:
             t0 = time.time()
@@ -222,7 +219,7 @@ def train(
             fabric.print(f"step {iter_num}: val loss {val_loss:.4f}, val time: {t1 * 1000:.2f}ms")
 
             if wandb.run:
-                wandb.log({'val loss': f'{val_loss:.4f}'})
+                wandb.log({'val loss': val_loss})
 
             fabric.barrier()
         if not is_accumulating and step_count % save_interval == 0:
