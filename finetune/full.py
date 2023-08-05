@@ -50,10 +50,12 @@ def setup(
         out_dir: Path = Path("out/full/alpaca"),
         precision: Optional[str] = None,
         tpu: bool = False,
+        model_name: str = None,
         wandb_project_name: str = None
 ):
     if precision is None:
         precision = "32-true" if tpu else "bf16-mixed"
+
     fabric_devices = devices
     if fabric_devices > 1:
         if tpu:
@@ -76,10 +78,10 @@ def setup(
 
     logger = step_csv_logger(out_dir.parent, out_dir.name, flush_logs_every_n_steps=log_interval)
     fabric = L.Fabric(devices=fabric_devices, strategy=strategy, precision=precision, loggers=logger)
-    fabric.launch(main, data_dir, checkpoint_dir, out_dir, wandb_project_name)
+    fabric.launch(main, data_dir, checkpoint_dir, out_dir, model_name, wandb_project_name)
 
 
-def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path, wandb_project_name: str):
+def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path, model_name: str, wandb_project_name: str):
     fabric.print(hparams)
     check_valid_checkpoint_dir(checkpoint_dir)
 
@@ -93,7 +95,11 @@ def main(fabric: L.Fabric, data_dir: Path, checkpoint_dir: Path, out_dir: Path, 
     train_data = torch.load(data_dir / "train.pt")
     val_data = torch.load(data_dir / "test.pt")
 
-    config = Config.from_name(name=checkpoint_dir.name)
+    if model_name:
+        config = Config.from_name(name=model_name)
+    else:
+        config = Config.from_name(name=checkpoint_dir.name)
+
     checkpoint_path = checkpoint_dir / "lit_model.pth"
     fabric.print(f"Loading model {str(checkpoint_path)!r} with {config.__dict__}")
     with fabric.init_module(empty_init=False):
